@@ -801,11 +801,12 @@ tcp_dump(struct zf_tcp* tcp)
           pcb->rttest, pcb->rtseq, pcb->sa, pcb->sv);
   zf_dump("  cong: nrtx=%u dupacks=%u persist_backoff=%u\n",
           pcb->nrtx, pcb->dupacks, pcb->persist_backoff);
-  zf_dump("  timers: %s%s%s%s\n",
+  zf_dump("  timers: %s%s%s%s%s\n",
           pcb->timers.running & (1<<ZF_TCP_TIMER_RTO) ? "RTO " : "",
           pcb->timers.running & (1<<ZF_TCP_TIMER_DACK) ? "DACK " : "",
           pcb->timers.running & (1<<ZF_TCP_TIMER_ZWIN) ? "ZWIN " : "",
-          pcb->timers.running & (1<<ZF_TCP_TIMER_TIMEWAIT) ? "TIMEWAIT " : "");
+          pcb->timers.running & (1<<ZF_TCP_TIMER_TIMEWAIT) ? "TIMEWAIT " : "",
+          pcb->timers.running & (1<<ZF_TCP_TIMER_KEEPALIVE) ? "KEEPALIVE " : "");
   zf_dump("  ooo: added=%u removed=%u replaced=%u\n", pcb->ooo_added,
           pcb->ooo_removed, pcb->ooo_replaced);
   zf_dump("  ooo: handling_deferred=%u dropped_nomem=%u drop_overfilled=%u\n",
