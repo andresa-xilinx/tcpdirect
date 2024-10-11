@@ -1321,7 +1321,9 @@ tcp_tmr(struct zf_tcp* tcp, int timers_expired)
   if( timers_expired & (1u << ZF_TCP_TIMER_KEEPALIVE)) {
     // TODO: for now, just report the timer expiring:
     zf_log_timer_trace(tcp, "%s: keepalive\n", __func__);
-    return event_occurred;
+    // IMO keepalive should not interfere with possible RTO firing as 
+    // RTO implies retransmissions.
+    // REMOVE: return event_occurred;
   }
 
   if( ~timers_expired & (1u << ZF_TCP_TIMER_RTO))

@@ -551,7 +551,7 @@ int tcp_connect(struct zf_tcp* tcp, const struct sockaddr_in* raddr)
  *
  * ZF
  */
-void tcp_init(struct zf_tcp* tcp)
+void tcp_init(struct zf _tcp* tcp)
 {
   struct tcp_pcb* pcb = &tcp->pcb;
 

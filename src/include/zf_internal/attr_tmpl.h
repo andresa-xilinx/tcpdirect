@@ -148,6 +148,21 @@ ZF_ATTR(int, tcp_finwait_ms, stable, ZF_TCP_TIMEWAIT_TIME_MS,
 
         "Length of TCP FIN-WAIT-2 timer in ms, 0 - disabled.")
 
+
+// TODO: missing tcp_keepalive_probes and tcp_keepalive_time
+// net.ipv4.tcp_keepalive_intvl = 75
+// net.ipv4.tcp_keepalive_probes = 9
+// net.ipv4.tcp_keepalive_time = 7200
+
+// first approach is to obtain keepalive value from _intvl and test it!
+
+ZF_ATTR(int, tcp_keepalive_ms, stable, ZF_TCP_KEEPALIVE_TIME_MS,
+        "net.ipv4.tcp_keepalive_intvl",
+        "zf_stack",
+
+        "Length of TCP KEEPALIVE interval timer in ms, 0 - disabled.")
+
+
 /* tcp_syn_retries, tcp_synack_retries and tcp_retries default values are one
  * lower than the Linux equivalents because Linux counts transmissions and
  * TCPDirect counts retransmissions. */

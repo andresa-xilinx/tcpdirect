@@ -901,7 +901,12 @@ bool tcp_process(struct zf_tcp* tcp, struct tcp_seg* seg, uint8_t* recv_flags)
 
       /* Start or stop RTO timer. */
       tcp_configure_rto_zwin_timers(tcp);
-
+      // TODO: check the validity of the following addition, that is, keepalive is worth
+      // TODO: sending only after in SYN_SENT (ie when SYN+ACK received) 
+      /* Start or NOT keepalive timer */
+      zf_tcp_timers_timer_start(tcp, ZF_TCP_TIMER_KEEPALIVE,
+                              zf_tcp_timers_keepalive_timeout(tcp);
+                              
       pcb->flags |= TF_ACK_NOW;
     }
     /* Simultaneous open. */
