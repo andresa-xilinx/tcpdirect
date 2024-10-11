@@ -842,6 +842,11 @@ bool tcp_process(struct zf_tcp* tcp, struct tcp_seg* seg, uint8_t* recv_flags)
     return false;
   }
   
+  // TODO: keepalive cancel timer (it might do different things depending on the TCP state!)
+  // TODO: study the different cases
+  if ( pcb->flags & TF_ACK_KEEPALIVE )
+      tcp_tx_cancel_keep_alive(tcp);
+
   /* Do different things depending on the TCP state. */
   switch (pcb->state) {
   case SYN_SENT:
@@ -901,7 +906,7 @@ bool tcp_process(struct zf_tcp* tcp, struct tcp_seg* seg, uint8_t* recv_flags)
 
       /* Start or stop RTO timer. */
       tcp_configure_rto_zwin_timers(tcp);
-
+                              
       pcb->flags |= TF_ACK_NOW;
     }
     /* Simultaneous open. */
@@ -1127,6 +1132,10 @@ tcp_frequent_sync_path(zf_stack* st, zf_tcp* tcp, struct tcphdr* tcp_hdr,
 
   tcp_dack_flags_flick(pcb);
 
+  // TODO: keepalive cancel timer (near delayed ack flag flick)
+  if ( pcb->flags & TF_ACK_KEEPALIVE )
+      tcp_tx_cancel_keep_alive(tcp);
+  
   /* Announced window must be updated after payload has been queued,
    * including if this happened earlier in the cut-through case. */
   tcp_update_rcv_ann_wnd(pcb);

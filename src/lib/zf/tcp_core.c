@@ -153,8 +153,28 @@ void tcp_do_transition(struct zf_tcp* tcp, enum tcp_state new_state)
 #endif
 
   switch( new_state ) {
-  case SYN_RCVD:
+  case SYN_RCVD:    
+    // TODO: check the validity of the following addition, that is, keepalive is worth
+    // TODO: sending only after in SYN_RCVD (ie when SYN+ACK received) 
+    /* Start or NOT? keepalive timer 
+    tcp->pcb.flags |= (TF_ACK_KEEPALIVE);
+    tcp->pcb.sent_probes=0;
+    zf_tcp_timers_timer_start(tcp, ZF_TCP_TIMER_KEEPALIVE,
+                                zf_tcp_timers_keepalive_time_timeout(stack));
+    // This zocket now prevents stack quiescence. 
+    zf_stack_busy_ref(stack);
+
+    zf_muxer_mark_waitable_not_ready(&tcp->w, EPOLLOUT | EPOLLHUP);
+    break; 
+    */
+
   case SYN_SENT:
+    tcp->pcb.flags |= (TF_ACK_KEEPALIVE);
+    tcp->pcb.sent_probes=0;
+    // TODO: keepalive: check that the timer is not restarting forever and SYN sent not getting a
+    // TODO:            reply is correctly handled by SYN retry algorithm.
+    zf_tcp_timers_timer_start(tcp, ZF_TCP_TIMER_KEEPALIVE,
+                                zf_tcp_timers_keepalive_time_timeout(stack));
     /* This zocket now prevents stack quiescence. */
     zf_stack_busy_ref(stack);
 
@@ -169,6 +189,8 @@ void tcp_do_transition(struct zf_tcp* tcp, enum tcp_state new_state)
 
     zf_muxer_mark_waitable_ready(&tcp->w, EPOLLIN | EPOLLOUT | EPOLLHUP);
     zf_tcp_timers_timer_stop(tcp, ZF_TCP_TIMER_ZWIN);
+    // Stop keepalive as it's we enter in TIME_WAIT when Initial timer is running
+    zf_tcp_timers_timer_stop(tcp, ZF_TCP_KEEPALIVE_TIME_MS);
     zf_tcp_timers_timer_start(tcp, ZF_TCP_TIMER_TIMEWAIT,
                               zf_tcp_timers_timewait_timeout(stack));
     break;

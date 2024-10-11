@@ -56,8 +56,10 @@ void dump_attributes(SkewPointer<zf_stack_impl> stimpl)
   zf_dump("alt_count=%d\n", stimpl->sti_alt_count);  
   zf_dump("rx_ring_refill_batch_size=%d\n", stimpl->sti_rx_ring_refill_batch_size);
   zf_dump("tcp_alt_ack_rewind=%d\n", stimpl->sti_tcp_alt_ack_rewind);  
+  // TODO: placeholder for keepalive 
+  zf_dump("tcp_keepalive=%d\n", stimpl->sti_tcp_keepalive);  
   zf_dump("tcp_delayed_ack=%d\n", stimpl->sti_tcp_delayed_ack);  
-  zf_dump("tcp_finwait_ms=%d\n", stimpl->sti_tcp_finwait_ms);  
+  zf_dump("tcp_finwait_ms=%d\n", stimpl->sti_tcp_finwait_ms);
   zf_dump("tcp_wait_for_time_wait=%d\n", stimpl->sti_tcp_wait_for_time_wait);  
   zf_dump("ctpio_max_frame_len=%d\n", stimpl->sti_ctpio_max_frame_len);
   zf_dump("force_separate_tx_vi=%d\n", stimpl->sti_force_separate_tx_vi);

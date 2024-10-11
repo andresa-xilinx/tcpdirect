@@ -69,6 +69,13 @@
  */
 #define ZF_TCP_TIMEWAIT_TIME_MS 120000
 
+/**
+ * Default keepalive time in ms  
+ */
+// TODO: ON-15958 keepalive check this value:
+#define ZF_TCP_KEEPALIVE_TIME_MS 7200000
+#define ZF_TCP_KEEPALIVE_INTVL_MS 7500
+#define ZF_TCP_KEEPALIVE_PROBES 9
 
 #endif /* __ZF_INT_TCP_OPT_H__ */
 

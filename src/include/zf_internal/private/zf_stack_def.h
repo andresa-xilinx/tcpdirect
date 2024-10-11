@@ -150,7 +150,7 @@ struct zf_stack {
 
   /* Non fast path items that need to be accessible as part of
    * protocol processing */
-
+ 
   /* A stack is waitable, and is ready for EPOLLSTACKHUP if and only if it is
    * quiescent. */
   struct zf_waitable w;
@@ -276,6 +276,10 @@ struct zf_stack_impl {
   int sti_tcp_alt_ack_rewind;
   int sti_tcp_delayed_ack;
   int sti_tcp_finwait_ms;
+  // TODO: keepalive
+  int sti_tcp_keepalive;
+  int sti_tcp_keepalive_time_ms;
+  int sti_tcp_keepalive_intvl_ms;
   int sti_tcp_timewait_ms;
   int sti_tcp_wait_for_time_wait; 
   int sti_tx_ring_max;
