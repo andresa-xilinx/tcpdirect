@@ -1338,7 +1338,7 @@ tcp_tmr(struct zf_tcp* tcp, int timers_expired)
 
     printf("sent probes: %i.\n", pcb->sent_probes);
 
-    if (pcb->sent_probes > stack->config.tcp_keepalive_probes ) {
+    if ( pcb->sent_probes >= stack->config.tcp_keepalive_probes ) {
        zf_log_timer_trace(tcp, "%s: Resetting connection due Lack of response upon keep alive check.\n", __func__);
        printf("Resetting connection due Lack of response upon keep alive check.\n");
 

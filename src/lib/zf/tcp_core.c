@@ -169,12 +169,6 @@ void tcp_do_transition(struct zf_tcp* tcp, enum tcp_state new_state)
     */
 
   case SYN_SENT:
-    tcp->pcb.flags |= (TF_ACK_KEEPALIVE);
-    tcp->pcb.sent_probes=0;
-    // TODO: keepalive: check that the timer is not restarting forever and SYN sent not getting a
-    // TODO:            reply is correctly handled by SYN retry algorithm.
-    zf_tcp_timers_timer_start(tcp, ZF_TCP_TIMER_KEEPALIVE,
-                                zf_tcp_timers_keepalive_time_timeout(stack));
     /* This zocket now prevents stack quiescence. */
     zf_stack_busy_ref(stack);
 

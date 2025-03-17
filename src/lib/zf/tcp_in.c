@@ -734,11 +734,32 @@ void tcp_configure_rto_zwin_timers(struct zf_tcp* tcp)
       pcb->persist_backoff = 0;
       zf_tcp_timers_timer_start(tcp, ZF_TCP_TIMER_ZWIN,
                                 tcp_timers_zwin_timeout(tcp));
+    } else if( ! zf_tcp_timers_timer_is_active(tcp, ZF_TCP_TIMER_ZWIN)) {
+      struct zf_stack* stack = zf_stack_from_zocket(tcp);
+      tcp->pcb.flags |= (TF_ACK_KEEPALIVE);
+      tcp->pcb.sent_probes=0;
+      // TODO: keepalive: check that the timer is not restarting forever and SYN sent not getting a
+      // TODO:            reply is correctly handled by SYN retry algorithm.
+      // zf_tcp_timers_timer_start(tcp, ZF_TCP_TIMER_KEEPALIVE,
+      //                            zf_tcp_timers_keepalive_time_timeout(stack));
+      zf_tcp_timers_timer_start(tcp, ZF_TCP_TIMER_KEEPALIVE,
+                                zf_tcp_timers_keepalive_time_timeout(stack));
     }
   }
-  else
+  else {
+   // Theory: RTO should only be started when data segments being queued. 
+   //         But I wonder if control packets or ACKs are queued it'll get 
+   //         into this part of the code; which makes the transition between 
+   //         states more tricky. Aparently it is not the case (simple removal and
+   //         test does not get into this case).
+   //           
+   if( zf_tcp_timers_timer_is_active(tcp, ZF_TCP_TIMER_KEEPALIVE) ) {
+      zf_tcp_timers_timer_stop(tcp, ZF_TCP_TIMER_KEEPALIVE);
+      tcp->pcb.sent_probes=0;
+   }
     zf_tcp_timers_timer_start(tcp, ZF_TCP_TIMER_RTO,
                               zf_tcp_timers_rto_timeout(tcp));
+  }
 }
 
 /* Returns the configured initial congestion window, or 10 * MSS by default. */
