@@ -30,6 +30,8 @@ static void usage_msg(FILE* f)
   fprintf(f, "  -s tcp payload in bytes\n");
   fprintf(f, "  -i number of iterations\n");
   fprintf(f, "  -r number of warmup iterations\n");
+  fprintf(f, "  -n NEW delay between pings\n");
+  fprintf(f, "  -y NEW (at the server) delay before sending SYN+ACK\n");
   fprintf(f, "  -m use multiplexer\n");
   fprintf(f, "  -t print timestamps (only if using multiplexer)\n");
   fprintf(f, "  -c enable overlapped reads and specify a time for the overlapped delay in nanoseconds\n");
@@ -69,6 +71,9 @@ struct cfg {
   bool touch_rx;
   bool overlapped_mode;
   int overlapped_delay;
+  int delay_after_synack;
+  int delay_betw_pXngs;
+  bool spin_on_reactor;
 };
 
 
@@ -81,6 +86,9 @@ static struct cfg cfg = {
   .percentile = 99,
   .results = NULL,
   .raw_filename = NULL,
+  .delay_betw_pXngs = 0,
+  .delay_after_synack = 0,
+  .spin_on_reactor = false,
 };
 
 static struct zf_muxer_set* muxer;
@@ -142,13 +150,35 @@ static void ping_pongs(struct zf_stack* stack, struct zft* zock)
     if( sends_left ) {
       if( cfg.ping ) {
         begin = get_frc64_time();
-      }
+      } 
       ZF_TEST(zft_send_single(zock, send_buf, cfg.size, 0) == cfg.size);
       --sends_left;
     }
     ZF_TEST(zft_zc_recv_done(zock, &msg.msg) == 1);
+
+    if( cfg.ping ) {
+      if( (i - cfg.warmups) == 1 ) {
+        printf("sent p1ngs %i - sleep %i secs\n",i,cfg.delay_betw_pXngs);
+        sleep(cfg.delay_betw_pXngs);
+      }
+    }
+
     --recvs_left;
   } while( recvs_left );
+
+  /*
+  if( cfg.ping ) {
+    if( (i-cfg.warmups) == 1 ) {
+      printf("sent p1ngs %i - sleep %i secs\n",i,cfg.delay_betw_pXngs);
+      sleep(cfg.delay_betw_p0ngs);
+    }
+  } else {
+    printf("sent p0ngs %i - sleep %i secs\n",i,cfg.delay_betw_pXngs);
+  }
+  */
+ if( cfg.spin_on_reactor )
+   while( true )
+     zf_reactor_perform(stack);
 }
 
 
@@ -430,7 +460,7 @@ static void ponger(struct zf_stack* stack, struct zft* zock,
 int main(int argc, char* argv[])
 {
   int c;
-  while( (c = getopt(argc, argv, "s:i:r:c:mtfp:w:R")) != -1 )
+  while( (c = getopt(argc, argv, "s:i:r:c:mtfpe:w:Rn:y:")) != -1 )
     switch (c) {
     case 's':
       cfg.size = atoi(optarg);
@@ -462,6 +492,15 @@ int main(int argc, char* argv[])
       break;
     case 'R':
       cfg.touch_rx = true;
+      break;
+    case 'n':
+      cfg.delay_betw_pXngs = atoi(optarg);
+      break;
+    case 'y':
+      cfg.delay_after_synack = atoi(optarg);
+      break;
+    case 'e':
+      cfg.spin_on_reactor = true;
       break;
     case '?':
       exit(1);
@@ -533,6 +572,9 @@ int main(int argc, char* argv[])
     int rc;
     ZF_TRY(zftl_listen(stack, ai->ai_addr, ai->ai_addrlen, attr, &listener));
     printf("Waiting for incoming connection\n");
+    // delay SYN+ACK to provoke SYN persist timer
+    printf("Sleep %i seconds after receiving SYN\n",cfg.delay_after_synack);
+    sleep(cfg.delay_after_synack);
     do {
       while( zf_reactor_perform(stack) == 0 );
     } while( (rc = zftl_accept(listener, &zock)) == -EAGAIN );
