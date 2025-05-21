@@ -85,10 +85,16 @@ static struct cfg cfg = {
 
 static struct zf_muxer_set* muxer;
 
+unsigned long max;
+unsigned long pointer = 0;
+unsigned long rnd_jump;
+unsigned n_jumps = 10;
 
 static void ping_pongs(struct zf_stack* stack, struct zft* zock)
 {
-  char send_buf[cfg.size];
+  //char send_buf[cfg.size];
+  const char send_buf[12] = {'A','B','C','D','E','F','G','H','I','J','K','-'};
+
   struct rx_msg msg;
   const int max_iov = sizeof(msg.iov) / sizeof(msg.iov[0]);
   int sends_left = cfg.itercount;
@@ -145,6 +151,19 @@ static void ping_pongs(struct zf_stack* stack, struct zft* zock)
       }
       ZF_TEST(zft_send_single(zock, send_buf, cfg.size, 0) == cfg.size);
       --sends_left;
+
+      if (!cfg.ping) {
+        if (max > 1 && rnd_jump == (max-sends_left) )
+           {
+            pointer += rnd_jump;
+            printf("Random jump: %lu\n", rnd_jump);
+            printf("Max: %lu\n", max);
+            max = (max - rnd_jump);
+            usleep(300000); // 300 ms to trigger RTO on the other side
+            printf("Pointer at: %lu\n", pointer);
+            rnd_jump = (random()*max)/(RAND_MAX*n_jumps);
+           }
+        }
     }
     ZF_TEST(zft_zc_recv_done(zock, &msg.msg) == 1);
     --recvs_left;
@@ -154,7 +173,8 @@ static void ping_pongs(struct zf_stack* stack, struct zft* zock)
 
 static void muxer_ping_pongs(struct zf_stack* stack, struct zft* zock)
 {
-  char send_buf[cfg.size];
+//char send_buf[cfg.size];
+  const char send_buf[12] = {'A','B','C','D','E','F','G','H','I','J','K','-'};
   struct rx_msg msg;
   const int max_iov = sizeof(msg.iov) / sizeof(msg.iov[0]);
   int sends_left = cfg.itercount;
@@ -437,6 +457,7 @@ int main(int argc, char* argv[])
       break;
     case 'i':
       cfg.itercount = atoi(optarg);
+      max = cfg.itercount;
       break;
     case 'r':
       cfg.warmups = atoi(optarg);
@@ -478,6 +499,11 @@ int main(int argc, char* argv[])
   argv += optind;
   if( argc != 2 )
     usage_err();
+
+
+  srandom(1234);
+  rnd_jump = (random()*max)/(RAND_MAX*n_jumps);
+
 
   cfg.itercount += cfg.warmups;
   if( ! strcmp(argv[0], "ping") )

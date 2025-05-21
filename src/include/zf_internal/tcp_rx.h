@@ -164,6 +164,27 @@ tcp_sendq_check_acked(struct zf_tcp* tcp, uint32_t ackno)
                          tcp_seg_len(tcp_seg_at(&pcb->sendq, pcb->sendq.begin)),
                          pcb->snd_nxt + pcb->snd_delegated) )
     handle_acked_segment(stack, tcp);
+  // The problem. 
+  // 
+  // When receiving ACKs we are only freeing the full segments from the send queue, and
+  // we leave acknowledged data within MSS; ie., ackno < right_border_of_MSS. 
+  //
+  // We need to check that the ackno is within data still living in the segment
+  // but that does not pass the check:
+  //
+  // valid_ack = ackno - (sendq.begin + segment_length)
+  // as segment_length does not depend on the received data, then valid_ack < 0 for when
+  // there is valid data in the current segment. 
+  // The pcb->sendq.middle most recent sent but unacked segment; middle-1 to end is unsent data. 
+  // 
+  // TODO:
+  // 1) how does the send data gets packed into the sendq after sending? 
+  // 2) how is it split when reaching segment boundaries?  
+  // 3) What pointers are involved?
+  // 4) What's the most efficient way to discard the ACKed data, and when? 
+  //    4.1) We could simply check most recent ACK number before triggering the RTO, instead 
+  //         of freeing data through this costly operation upon ACK arrival. That is, leave it 
+  //         as it is, but only delete the unnecessary data upon RTO activation (lazzy approach)
 }
 
 
