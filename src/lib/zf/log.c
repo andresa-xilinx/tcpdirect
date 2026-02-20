@@ -28,6 +28,11 @@ void zf_backtrace()
 uint64_t zf_log_level = ZF_LCL_ALL_ERR;
 int zf_log_format;
 
+/* Debug-build-only feature gate for API/shim call tracing (see ZF_LOG_CALL).
+ * In release builds the trace sites are compiled out, but keeping this symbol
+ * simplifies code and allows debug builds to toggle at runtime. */
+int zf_log_calls;
+
 static FILE* zf_log_file;
 char zf_log_file_name[ZF_LOG_FILE_NAME_SIZE] = "/dev/stderr";
 

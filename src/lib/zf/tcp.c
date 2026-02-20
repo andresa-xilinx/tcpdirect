@@ -21,6 +21,11 @@
 
 #include <netinet/in.h>
 
+#ifndef NDEBUG
+/* Public ZF API call tracing (debug builds only). */
+static const zf_logger zf_log_api_trace(ZF_LC_STACK, ZF_LL_TRACE);
+#endif
+
 
 /* This allocates the handle which is used to refer to the zocket until we
  * create the real zft structure, which requires knowing what filters we
@@ -35,6 +40,7 @@
 int zft_alloc(struct zf_stack* st, const struct zf_attr* attr,
               struct zft_handle** ts_out)
 {
+  ZF_LOG_CALL(zf_log_api_trace, st, "st=%p attr=%p ts_out=%p", st, attr, ts_out);
 
   if ( ef_vi_transmit_capacity(zf_stack_nic_tx_vi(&st->nic[0])) == 0 || ef_vi_receive_capacity(&st->nic[0].vi) == 0 ) {
     zf_log_stack_err(st, "Failed to allocate TCP zocket in a stack with TX or RX path disabled.\n");
@@ -110,6 +116,10 @@ extern int zft_addr_bind(struct zft_handle* handle,
   struct zf_stack* st = zf_stack_from_zocket(tcp);
   struct zf_rx_res* rx_res;
 
+  ZF_LOG_CALL(zf_log_api_trace, st,
+              "handle=%p laddr=%p laddrlen=%d flags=0x%x",
+              handle, laddr_sa, (int) laddrlen, flags);
+
 #ifndef NDEBUG
   if( flags != 0 )
     return -EINVAL;
@@ -153,6 +163,9 @@ int zft_connect(struct zft_handle* handle, const struct sockaddr* raddr_sa,
   struct zf_tcp* tcp = ZF_CONTAINER(struct zf_tcp, ts, ts);
   struct zf_stack* st = zf_stack_from_zocket(tcp);
   struct zf_rx_res* tcp_res;
+
+  ZF_LOG_CALL(zf_log_api_trace, st, "handle=%p raddr=%p raddrlen=%d ts_out=%p",
+              handle, raddr_sa, (int) raddrlen, ts_out);
 
   ZF_CHECK_SOCKADDR_IN(raddr_sa, raddrlen);
 
@@ -217,6 +230,7 @@ int zft_connect(struct zft_handle* handle, const struct sockaddr* raddr_sa,
 int zft_shutdown_tx(struct zft* ts)
 {
   struct zf_tcp* tcp = ZF_CONTAINER(struct zf_tcp, ts, ts);
+  ZF_LOG_CALL(zf_log_api_trace, zf_stack_from_zocket(tcp), "ts=%p", ts);
   if( tcp->pcb.snd_delegated )
     return -EBUSY;
   return tcp_shutdown_tx(tcp);
@@ -227,6 +241,8 @@ int zft_free(struct zft* ts)
 {
   struct zf_tcp* tcp = ZF_CONTAINER(struct zf_tcp, ts, ts);
   struct zf_stack* st = zf_stack_from_zocket(tcp);
+
+  ZF_LOG_CALL(zf_log_api_trace, st, "ts=%p", ts);
 
   if( (tcp->tcp_state_flags & ZF_TCP_STATE_FLAGS_INITIALISED) == 0 )
     return __zft_handle_free(st, tcp);
@@ -240,6 +256,7 @@ int zft_free(struct zft* ts)
 
 int zft_handle_free(struct zft_handle* handle)
 {
+  ZF_LOG_CALL(zf_log_api_trace, NO_STACK, "handle=%p", handle);
   struct zft* ts = (struct zft*) handle;
   return zft_free(ts);
 }
@@ -299,6 +316,8 @@ ZF_HOT void zft_zc_recv(struct zft *ts, struct zft_msg* restrict msg,
 {
   zf_stack* stack = zf_stack_from_zocket(ts);
   struct zf_tcp* tcp = ZF_CONTAINER(struct zf_tcp, ts, ts);
+
+  ZF_LOG_CALL(zf_log_api_trace, stack, "ts=%p msg=%p flags=0x%x", ts, msg, flags);
 
   zf_assert_nflags(flags, ~(ZF_OVERLAPPED_WAIT | ZF_OVERLAPPED_COMPLETE));
   zf_assert_impl(flags, ZF_IS_POW2(flags)); /* one flag only */
@@ -555,6 +574,9 @@ ssize_t zft_send_single(struct zft* restrict ts, const void* buf,
   struct zf_waitable* w = &tcp->w;
   ssize_t rc;
 
+  ZF_LOG_CALL(zf_log_api_trace, zf_stack_from_zocket(tcp),
+              "ts=%p buf=%p buflen=%zu flags=0x%x", ts, buf, buflen, flags);
+
   /* Only MSG_MORE flag supported */
   zf_assert_equal(flags & ~MSG_MORE, 0);
 
@@ -650,6 +672,9 @@ ssize_t zft_send(struct zft* restrict ts, const struct iovec* restrict iov,
   zf_stack* stack = zf_stack_from_zocket(tcp);
   struct zf_waitable* w = &tcp->w;
   ssize_t rc;
+
+  ZF_LOG_CALL(zf_log_api_trace, stack, "ts=%p iov=%p iov_cnt=%d flags=0x%x",
+              ts, iov, iov_cnt, flags);
 
   /* Only MSG_MORE flag supported */
   zf_assert_equal(flags & ~MSG_MORE, 0);
@@ -790,6 +815,9 @@ int zftl_listen(struct zf_stack* st, const struct sockaddr* laddr_sa,
                 socklen_t laddrlen, const struct zf_attr* attr,
                 struct zftl** tl_out)
 {
+  ZF_LOG_CALL(zf_log_api_trace, st, "st=%p laddr=%p laddrlen=%d attr=%p tl_out=%p",
+              st, laddr_sa, (int) laddrlen, attr, tl_out);
+
   ZF_CHECK_SOCKADDR_IN(laddr_sa, laddrlen);
 
   struct sockaddr_in* laddr = (struct sockaddr_in*)laddr_sa;
@@ -844,6 +872,9 @@ int zftl_accept(struct zftl* tl, struct zft** ts_out)
 {
   struct zf_tcp_listen_state* tls = ZF_CONTAINER(struct zf_tcp_listen_state,
                                                  tl, tl);
+
+  ZF_LOG_CALL(zf_log_api_trace, zf_stack_from_zocket(tl), "tl=%p ts_out=%p",
+              tl, ts_out);
 
   if( tls->acceptq_head == ZF_ZOCKET_ID_INVALID )
     return -EAGAIN;
@@ -904,6 +935,9 @@ int zftl_free(struct zftl* tl)
   struct zf_tcp_listen_state* tls = ZF_CONTAINER(struct zf_tcp_listen_state,
                                                  tl, tl);
   struct zf_stack* stack = zf_stack_from_zocket(tl);
+
+  ZF_LOG_CALL(zf_log_api_trace, stack, "tl=%p", tl);
+
   int rc = tcp_shutdown_listen(stack, tls);
   zf_assume(rc == 0 || rc == -ENOTCONN);
   zf_muxer_del(&tls->w);

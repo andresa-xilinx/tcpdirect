@@ -849,6 +849,8 @@ int zf_stack_check_vi_compatibility(zf_stack* st, const zf_attr* attr,
 
 int zf_stack_alloc(struct zf_attr* attr, struct zf_stack** stack_out)
 {
+  ZF_LOG_CALL(zf_log_stack_trace, NO_STACK, "attr=%p stack_out=%p", attr, stack_out);
+
   zf_stack* st = NO_STACK;
 
   /* Check there's nothing obviously wrong with the config. */

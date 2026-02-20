@@ -276,25 +276,38 @@ struct ShimSockCall<Ret (**)(int fd, Args...), real_api_call,
           /* __PRETTY_FUNCTION__ is not pretty at all, but
            * typeid(*this).name() does not work in a static method. */
 
-          zf_log_ss_info(stack, "%s(",
-                          strstr(strstr(__PRETTY_FUNCTION__, "= &"), "::"));
-          XFdPrint<FdArgPrint, int, Args...>()(fd, args...);
-          zf_log_ss_info(NO_STACK, ")\n");
-          Ret rc = (sock->ops->*shim_call)(sock, args...);
-          zf_log_ss_info(stack,"%s(",
-                          strstr(strstr(__PRETTY_FUNCTION__, "= &"), "::"));
-          if( rc >= 0 )
-            XFdPrint<FdArgRetPrint, int, Args...>()(fd, args...);
-          else /* In case of error do not print garbage */
+#ifndef NDEBUG
+          const char* __zfss_fn =
+            strstr(strstr(__PRETTY_FUNCTION__, "= &"), "::");
+          if( ZF_UNLIKELY(zf_log_calls) && ZF_UNLIKELY(zf_log_ss_trace.enabled()) ) {
+            zf_log_ss_trace(stack, "CALL %s(", __zfss_fn);
             XFdPrint<FdArgPrint, int, Args...>()(fd, args...);
-          zf_log_ss_info(NO_STACK,") -> %d\n", (int)rc);
+            zf_log_ss_trace(NO_STACK, ")\n");
+          }
+#endif
+
+          Ret rc = (sock->ops->*shim_call)(sock, args...);
+
+#ifndef NDEBUG
+          if( ZF_UNLIKELY(zf_log_calls) && ZF_UNLIKELY(zf_log_ss_trace.enabled()) ) {
+            zf_log_ss_trace(stack, "CALL %s(", __zfss_fn);
+            if( rc >= 0 )
+              XFdPrint<FdArgRetPrint, int, Args...>()(fd, args...);
+            else /* In case of error do not print garbage */
+              XFdPrint<FdArgPrint, int, Args...>()(fd, args...);
+            zf_log_ss_trace(NO_STACK, ") -> %d\n", (int) rc);
+          }
+#endif
+
           if( rc == -EHOSTUNREACH ) {
             /* No route - perhaps wrong interface - case for handover.
              * ZF state should already have been freed,
              * now clear shim state */
-            zf_log_ss_info(stack, "%s(%d, ...) - HANDOVER\n",
-                            strstr(strstr(__PRETTY_FUNCTION__, "= &"), "::"),
-                            fd);
+#ifndef NDEBUG
+            if( ZF_UNLIKELY(zf_log_calls) && ZF_UNLIKELY(zf_log_ss_trace.enabled()) )
+              zf_log_ss_trace(stack, "CALL %s(%d, ...) - HANDOVER\n",
+                              __zfss_fn, fd);
+#endif
             zfss_handover(fd);
             rc = -ENOSYS;
           }
@@ -471,6 +484,11 @@ socket(int domain, int type, int protocol)
 
   errno = saved_errno;
   zfss_exit_lib();
+#ifndef NDEBUG
+  if( ZF_UNLIKELY(zf_log_calls) && ZF_UNLIKELY(zf_log_ss_trace.enabled()) )
+    zf_log_ss_trace(stack, "CALL ::%s(%s) -> %d\n", __func__,
+                    type == SOCK_STREAM ? "TCP" : "UDP", rc);
+#endif
   zf_log_ss_info(stack, "::%s(%s) -> %d\n", __func__,
                   type == SOCK_STREAM ? "TCP" : "UDP", rc);
   return rc;
@@ -551,6 +569,10 @@ ZF_INTERCEPT(int, close, int fd)
 
   zfss_stack_poll_if_behind(stack);
 
+#ifndef NDEBUG
+  if( ZF_UNLIKELY(zf_log_calls) && ZF_UNLIKELY(zf_log_ss_trace.enabled()) )
+    zf_log_ss_trace(stack, "CALL ::%s(%d)\n", __func__, fd);
+#endif
   zf_log_ss_info(stack, "::%s(%d)\n", __func__, fd);
   int rc = file->close(file);
   if( rc == 0 )
@@ -558,6 +580,10 @@ ZF_INTERCEPT(int, close, int fd)
   else
     zfss_close(file->fd);
   zfss_exit_lib();
+#ifndef NDEBUG
+  if( ZF_UNLIKELY(zf_log_calls) && ZF_UNLIKELY(zf_log_ss_trace.enabled()) )
+    zf_log_ss_trace(stack, "CALL ::%s(%d) -> %d\n", __func__, fd, rc);
+#endif
   zf_log_ss_info(stack, "::%s(%d) -> %d\n", __func__, fd, rc);
   if( rc < 0 )
     RET_WITH_ERRNO(-rc);
@@ -587,9 +613,18 @@ ioctl(int fd, unsigned long request, ...)
   va_end(ap);
 
   if( (sock = zfss_fd_table_get_sock(fd)) != NULL && zfss_enter_lib() ) {
+#ifndef NDEBUG
+    if( ZF_UNLIKELY(zf_log_calls) && ZF_UNLIKELY(zf_log_ss_trace.enabled()) )
+      zf_log_ss_trace(stack, "CALL ::%s(%d, %lu)\n", __func__, fd, request);
+#endif
     zf_log_ss_info(stack, "::%s(%d, %lu)\n", __func__, fd, request);
     rc = zfss_ioctl(sock, request, arg);
     zfss_exit_lib();
+#ifndef NDEBUG
+    if( ZF_UNLIKELY(zf_log_calls) && ZF_UNLIKELY(zf_log_ss_trace.enabled()) )
+      zf_log_ss_trace(stack, "CALL ::%s(%d, %lu) -> %d\n", __func__, fd,
+                      request, rc);
+#endif
     zf_log_ss_info(stack, "::%s(%d, %lu) -> %d\n", __func__, fd,
                     request, rc);
     if( rc == -ENOTTY )
@@ -623,9 +658,17 @@ fcntl(int fd, int cmd, ...)
   if( cmd == F_SETFL &&
       (sock = zfss_fd_table_get_sock(fd)) != NULL &&
       zfss_enter_lib() ) {
+#ifndef NDEBUG
+    if( ZF_UNLIKELY(zf_log_calls) && ZF_UNLIKELY(zf_log_ss_trace.enabled()) )
+      zf_log_ss_trace(stack, "CALL ::%s(%d, %d)\n", __func__, fd, cmd);
+#endif
     zf_log_ss_info(stack, "::%s(%d, %d)\n", __func__, fd, cmd);
     zfss_set_nonblock(sock, arg & O_NONBLOCK);
     zfss_exit_lib();
+#ifndef NDEBUG
+    if( ZF_UNLIKELY(zf_log_calls) && ZF_UNLIKELY(zf_log_ss_trace.enabled()) )
+      zf_log_ss_trace(stack, "CALL ::%s(%d, %d) -> 0\n", __func__, fd, cmd);
+#endif
     zf_log_ss_info(stack, "::%s(%d, %d) -> 0\n", __func__, fd, cmd);
   }
 
@@ -754,8 +797,13 @@ ZF_INTERCEPT(int, nanosleep, const struct timespec *req, struct timespec *rem)
   }
   errno = saved_errno;
   zfss_exit_lib();
-  if( zfss_init() )
+  if( zfss_init() ) {
+#ifndef NDEBUG
+    if( ZF_UNLIKELY(zf_log_calls) && ZF_UNLIKELY(zf_log_ss_trace.enabled()) )
+      zf_log_ss_trace(stack, "CALL ::%s(%ld%lld)\n", __func__, req->tv_sec, req->tv_nsec);
+#endif
     zf_log_ss_info(stack, "::%s(%ld%lld)\n", __func__, req->tv_sec, req->tv_nsec);
+  }
 
   if( rem ) {
     rem->tv_sec = 0;

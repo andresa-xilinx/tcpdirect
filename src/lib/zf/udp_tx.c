@@ -21,6 +21,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#ifndef NDEBUG
+/* Public ZF API call tracing (debug builds only). */
+static const zf_logger zf_log_api_trace(ZF_LC_UDP_TX, ZF_LL_TRACE);
+#endif
+
 
 int zfut_alloc(struct zfut** us_out,
                struct zf_stack* st,
@@ -31,6 +36,10 @@ int zfut_alloc(struct zfut** us_out,
                int flags,
                const struct zf_attr* attr)
 {
+  ZF_LOG_CALL(zf_log_api_trace, st,
+              "us_out=%p st=%p laddr=%p laddrlen=%d raddr=%p raddrlen=%d flags=0x%x attr=%p",
+              us_out, st, laddr_sa, (int) laddrlen, raddr_sa, (int) raddrlen,
+              flags, attr);
 
   /* Check first VI of stack. If it has no TX capability then fail */
   if ( ef_vi_transmit_capacity(zf_stack_nic_tx_vi(&st->nic[0])) == 0 ) {
@@ -108,6 +117,8 @@ int zfut_free(struct zfut* us)
 {
   struct zf_udp_tx* udp_tx = ZF_CONTAINER(struct zf_udp_tx, handle, us);
   struct zf_stack* st = zf_stack_from_zocket(us);
+
+  ZF_LOG_CALL(zf_log_api_trace, st, "us=%p", us);
 
   zf_muxer_del(&udp_tx->w);
 
@@ -254,6 +265,10 @@ zfut_send_single(struct zfut *us, const void* buf, size_t buflen)
 {
   struct zf_udp_tx* udp_tx = ZF_CONTAINER(struct zf_udp_tx, handle, us);
   struct zf_tx* tx = &udp_tx->tx;
+
+  ZF_LOG_CALL(zf_log_api_trace, zf_stack_from_zocket(tx), "us=%p buf=%p buflen=%zu",
+              us, buf, buflen);
+
   zf_tx_iphdr(tx)->frag_off = htons(IP_DF);
   return send_single(udp_tx, buf, buflen);
 }
@@ -309,6 +324,9 @@ zfut_send(struct zfut* restrict us,
   struct zf_udp_tx* udp_tx = ZF_CONTAINER(struct zf_udp_tx, handle, us);
   struct zf_tx* tx = &udp_tx->tx;
   int rc;
+
+  ZF_LOG_CALL(zf_log_api_trace, zf_stack_from_zocket(tx), "us=%p iov=%p iov_cnt=%d flags=0x%x",
+              us, iov, iov_cnt, flags);
   size_t udp_payload = 0; /* set it just to suppress gcc6 warning */
   size_t mss = zfut_mss(tx);
 

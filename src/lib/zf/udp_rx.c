@@ -15,10 +15,16 @@
 
 #include <netinet/in.h>
 
+#ifndef NDEBUG
+/* Public ZF API call tracing (debug builds only). */
+static const zf_logger zf_log_api_trace(ZF_LC_UDP_RX, ZF_LL_TRACE);
+#endif
+
 _Static_assert(sizeof(zf_udp_rx::zocket_mask) * 8 >= zf_stack::MAX_ZOCKET_COUNT);
 
 extern int zfur_alloc(struct zfur** us_out, struct zf_stack* st, const struct zf_attr* attr)
 {
+  ZF_LOG_CALL(zf_log_api_trace, st, "us_out=%p st=%p attr=%p", us_out, st, attr);
 
   if ( ef_vi_receive_capacity(&st->nic[0].vi) == 0 ) {
     zf_log_stack_err(st, "Failed to allocate RX UDP zocket in a stack with no RX capability\n");
@@ -58,6 +64,10 @@ extern int zfur_addr_bind(struct zfur* us, struct sockaddr* laddr_sa,
   struct zf_udp_rx* udp_rx = ZF_CONTAINER(struct zf_udp_rx, handle, us);
   struct zf_stack* st = zf_stack_from_zocket(us);
   struct zf_rx_res* rx_res;
+
+  ZF_LOG_CALL(zf_log_api_trace, st,
+              "us=%p laddr=%p laddrlen=%d raddr=%p raddrlen=%d flags=0x%x",
+              us, laddr_sa, (int) laddrlen, raddr_sa, (int) raddrlen, flags);
 
   if( raddr_sa != NULL )
     ZF_CHECK_SOCKADDR_IN(raddr_sa, raddrlen);
@@ -106,6 +116,10 @@ int zfur_addr_unbind(struct zfur* us, const struct sockaddr* laddr,
 {
   struct zf_stack* st = zf_stack_from_zocket(us);
 
+  ZF_LOG_CALL(zf_log_api_trace, st,
+              "us=%p laddr=%p laddrlen=%d raddr=%p raddrlen=%d flags=0x%x",
+              us, laddr, (int) laddrlen, raddr, (int) raddrlen, flags);
+
   if( laddr != NULL )
     ZF_CHECK_SOCKADDR_IN(laddr, laddrlen);
   if( raddr != NULL )
@@ -123,6 +137,8 @@ int zfur_free(struct zfur* us)
   struct zf_stack* st = zf_stack_from_zocket(us);
   struct zf_rx_res* rx_res;
   int rc;
+
+  ZF_LOG_CALL(zf_log_api_trace, st, "us=%p", us);
 
   /* Drop all unread packets. */
   zfr_drop_queue(&st->pool, rx);
@@ -193,6 +209,9 @@ zfur_zc_recv(struct zfur *us, struct zfur_msg* restrict msg, int flags)
 {
   zf_stack* stack = zf_stack_from_zocket(us);
   zf_udp_rx* udp_rx = ZF_CONTAINER(struct zf_udp_rx, handle, us);
+
+  ZF_LOG_CALL(zf_log_api_trace, stack, "us=%p msg=%p flags=0x%x", us, msg, flags);
+
   zf_assert_nflags(flags, ~(ZF_OVERLAPPED_WAIT | ZF_OVERLAPPED_COMPLETE));
   zf_assert_impl(flags, ZF_IS_POW2(flags)); /* one flag only */
 
@@ -261,4 +280,3 @@ struct zf_waitable* zfur_to_waitable(struct zfur* us)
   struct zf_udp_rx* udp_rx = ZF_CONTAINER(struct zf_udp_rx, handle, us);
   return &udp_rx->w;
 }
-

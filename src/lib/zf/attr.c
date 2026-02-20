@@ -217,6 +217,8 @@ int zf_attr_set_int(struct zf_attr* attr, const char* name, int64_t val)
       *pi = (int) val;
       if( strcmp("log_format", f->name) == 0 )
         zf_log_format = (int)val;
+      if( strcmp("log_calls", f->name) == 0 )
+        zf_log_calls = (int) val;
       return 0;
     }
     case zf_attr_type_str:
@@ -256,6 +258,8 @@ int zf_attr_get_int(struct zf_attr* attr, const char* name, int64_t* val)
   case zf_attr_type_int:
     if( strcmp("log_format", f->name) == 0 )
       *val = zf_log_format;
+    else if( strcmp("log_calls", f->name) == 0 )
+      *val = zf_log_calls;
     else
       *val = *(int*)get_field(attr, f);
     return 0;

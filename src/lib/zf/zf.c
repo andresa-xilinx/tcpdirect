@@ -11,6 +11,12 @@
 #include <dlfcn.h>
 #include <functional>
 
+#ifndef NDEBUG
+static const zf_logger zf_log_api_trace(ZF_LC_STACK, ZF_LL_TRACE);
+#else
+#define zf_log_api_trace(...) do{}while(0)
+#endif
+
 template <typename T>
 T _placeholder_cp_func() {
   return (T)-1;
@@ -45,6 +51,8 @@ struct zf_state zf_state = (struct zf_state) {
 
 int zf_init(void)
 {
+  ZF_LOG_CALL(zf_log_api_trace, NO_STACK, "");
+
   int rc;
   struct zf_attr* attr;
 
@@ -62,6 +70,9 @@ int zf_init(void)
     zf_log_level = attr->log_level;
   if( attr->log_format != ZF_LCL_ALL_ERR )
     zf_log_format = attr->log_format;
+#ifndef NDEBUG
+  zf_log_calls = attr->log_calls;
+#endif
 
   if( attr->log_to_kmsg )
     rc = zf_log_replace_stderr("/dev/kmsg");
@@ -122,6 +133,8 @@ fail:
 
 extern int zf_deinit(void)
 {
+  ZF_LOG_CALL(zf_log_api_trace, NO_STACK, "");
+
   zf_state.cp.fini(zf_state.cp_handle);
   if (zf_state.efcp_so_handle && zf_state.efcp_so_handle != &zf_state)
   {

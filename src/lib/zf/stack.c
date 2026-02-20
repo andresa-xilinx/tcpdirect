@@ -173,6 +173,8 @@ int zf_stack_free_nic_resources(struct zf_stack_impl* sti, int nicno)
 /* Frees a stack.  This is not safe on partially-initialised stacks. */
 int zf_stack_free(struct zf_stack* stack)
 {
+  ZF_LOG_CALL(zf_log_stack_trace, stack, "stack=%p", stack);
+
   struct zf_stack_impl* sti = ZF_CONTAINER(struct zf_stack_impl, st, stack);
   int rc = 0, rc1;
 

@@ -68,6 +68,22 @@ ZF_ATTR(int, log_format, stable, ZF_LF_STACK_NAME | ZF_LF_TCP_TIME,
         "ZF_LF_TCP_TIME(0x4),\n "
         "ZF_LF_PROCESS(0x8).")
 
+ZF_ATTR(int, log_calls, stable_expert, 0, "off",
+        "zf_stack",
+
+        "Enable debug-build-only API/shim call tracing.\n"
+        "\n"
+        "When enabled, TCPDirect will emit log lines prefixed with \"CALL\" "
+        "for key public ZF API calls (e.g. zf_stack_alloc(), zft_free()) and "
+        "for socket-shim intercepted calls (e.g. close(), recv(), send()).\n"
+        "\n"
+        "Notes:\n"
+        " - This attribute only has effect in debug builds; in release builds "
+        "the trace sites are compiled out.\n"
+        " - Output is still gated by the per-component TRACE bit in "
+        "\\attrref{log_level}. For example, to see socket shim calls you must "
+        "enable TRACE for the socket_shim component.")
+
 ZF_ATTR(str, log_file, stable, NULL, "(stderr)",
         "zf_stack",
 
@@ -385,4 +401,3 @@ ZF_ATTR(int, n_bufs, stable, 0, NULL,
         "alternatives in use and the frequency at which the application polls "
         "the stack and reads pending data from zockets.  0 - use maximum the "
         "stack with given parameters can use." )
-
