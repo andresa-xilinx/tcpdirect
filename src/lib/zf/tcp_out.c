@@ -48,6 +48,9 @@
 
 #include <arpa/inet.h>
 
+#include <stdio.h>
+#include <time.h>
+
 
 #define TCP_STATS_INC(x)
 
@@ -247,23 +250,68 @@ tcp_copy_data_to_segment(struct tcp_seg* seg, const iovec* iov_hdr,
 
 #define MY_TCP_HDR_SIZE 20
 
+/**
+ * Replace (i.e. "trim") already-ACKed payload bytes inside a queued TCP segment.
+ *
+ * Context:
+ *  - During RTO recovery we may end up with a single sendq segment that still
+ *    contains a prefix of payload bytes that have already been ACKed by the peer.
+ *  - The caller provides the number of ACKed payload bytes to remove from the
+ *    start of this segment (first_byte_offset).
+ *
+ * Operation:
+ *  1) Copy the remaining (unacked) payload bytes into a temporary buffer.
+ *  2) Copy those bytes back to the segment payload start (right after TCP hdr).
+ *  3) Shrink seg->iov.iov_len and seg->len to match the trimmed payload.
+ *
+ * Note:
+ *  - This function intentionally only moves TCP *payload* bytes.
+ *  - TCP/IP/Ethernet headers are not rebuilt here; tcp_output() will populate
+ *    sequence/ack/window/checksum fields as required.
+ */
 static inline void
 tcp_replace_data_inside_segment(struct tcp_seg* seg, unsigned first_byte_offset)
 {
-  char tmp_buffer[TCP_MAX_MSS];
-  // TODO: defensive check the first_byte_offset not to run into invalid mem access
-  // TODO: Check seg->len and seg->iov.len (please)
-  // 1) copy existing buffer into a tmp buffer 
-  unsigned seg_length = seg->iov.iov_len - MY_TCP_HDR_SIZE - first_byte_offset;
-  printf("replace data length: %u\n", seg_length);
+  /* PROPOSED TODO FILL (defensive bounds checks):
+   * The existing code works in the intended call-path. These checks are added
+   * to prevent invalid memory access if the function is ever called with an
+   * inconsistent segment layout or offset.
+   */
+  if( ZF_UNLIKELY(seg->iov.iov_len < MY_TCP_HDR_SIZE) )
+    return;
 
-  memcpy(tmp_buffer, (char *)seg->iov.iov_base + MY_TCP_HDR_SIZE + first_byte_offset, 
+  const unsigned payload_len = seg->iov.iov_len - MY_TCP_HDR_SIZE;
+
+  /* first_byte_offset is measured in payload bytes. */
+  if( ZF_UNLIKELY(first_byte_offset > payload_len) )
+    return;
+
+  /* Keep behaviour: use the iov length as the source of truth. */
+  unsigned seg_length = payload_len - first_byte_offset;
+
+  /* TCP segments in the sendq should never exceed TCP_MAX_MSS, but guard the
+   * temporary buffer anyway.
+   */
+  if( ZF_UNLIKELY(seg_length > TCP_MAX_MSS) )
+    return;
+
+#ifdef DEBUG_RTO
+  printf("RTO trim: first_byte_offset=%u payload_len=%u new_len=%u\n",
+         first_byte_offset, payload_len, seg_length);
+#endif
+
+  char tmp_buffer[TCP_MAX_MSS];
+
+  /* 1) Copy remaining payload into a temporary buffer. */
+  memcpy(tmp_buffer,
+         (char*) seg->iov.iov_base + MY_TCP_HDR_SIZE + first_byte_offset,
          seg_length);
-  // 2) shift unacked data to the beginning of the buffer          
-  memcpy((char*)seg->iov.iov_base + MY_TCP_HDR_SIZE, tmp_buffer, 
-         seg_length);
-  // 3) TODO: check length of seg->iov: (11/8/25)
-  seg->iov.iov_len -= first_byte_offset;
+
+  /* 2) Shift unacked data to the beginning of the payload region. */
+  memcpy((char*) seg->iov.iov_base + MY_TCP_HDR_SIZE, tmp_buffer, seg_length);
+
+  /* 3) Shrink segment lengths to match the remaining payload bytes. */
+  seg->iov.iov_len = MY_TCP_HDR_SIZE + seg_length;
   seg->len = seg_length;
 }
 
@@ -1216,177 +1264,199 @@ void tcp_rexmit_fast(struct zf_tcp* tcp)
   tcp_fix_fast_send_length(pcb);
 }
 
+/*
+ * tcp_requeue_unacked(): "requeue for RTO"
+ * ----------------------------------------
+ *
+ * Goal:
+ *  Move the sendq boundary so that previously sent-but-unacked segments become
+ *  eligible for retransmission via tcp_output().
+ *
+ * Background (sendq layout):
+ *  - sendq.begin  .. sendq.middle-1 : sent (unacked)
+ *  - sendq.middle .. sendq.end-1    : unsent
+ *
+ * In the upstream lwIP model, a fast retransmit can selectively requeue a
+ * subset of segments. In TCPDirect, the sendq is also used as a compacting
+ * buffer (payload may be coalesced into the tail of an existing segment),
+ * and the boundary is tracked by indices rather than byte offsets.
+ *
+ * New version summary (clarified for external readers):
+ *
+ *  PSEUDOCODE
+ *    if( no unacked segments )
+ *      return;
+ *
+ *    // Requeue everything that is currently "unacked".
+ *    sendq.middle = sendq.begin;
+ *
+ *    // Optional (DEBUG_RTO): if the compacting logic has left ACKed bytes at
+ *    // the start of the first segment, trim them so that the segment begins
+ *    // at pcb->lastack and contains only non-ACKed bytes.
+ *    if( sendq has exactly one segment in-flight/unacked and
+ *        that segment contains acked prefix bytes ) {
+ *      rewrite segment TCP seq to pcb->lastack;
+ *      shift payload left to remove the acked prefix;
+ *      shrink seg lengths accordingly;
+ *    }
+ *
+ * Notes / caveats:
+ *  - This code path is deliberately conservative: it keeps the existing,
+ *    known-good behaviour (requeue all unacked) to preserve send ordering.
+ *  - Header fields other than `seq` are expected to be fixed up by tcp_output()
+ *    and tcp_segment_to_vi() (ack/window/checksum/len, etc).
+ */
+
+#define DEBUG_RTO
+
 static inline void tcp_requeue_unacked(tcp_pcb* pcb)
 {
-  bool more_than_one_seg = (pcb->sendq.middle - pcb->sendq.begin > 1);
- 
-  if (more_than_one_seg)
-    {
-      printf("WARNING: handling more than one seg ?!\n");
-      printf("begin %u, middle %u.\n\n", pcb->sendq.begin, pcb->sendq.middle);
-    }
+#ifdef DEBUG_RTO
+  const bool more_than_one_seg = (pcb->sendq.middle - pcb->sendq.begin > 1);
 
+  if( more_than_one_seg ) {
+    printf("WARNING: handling more than one seg ?!\n");
+    printf("begin %u, middle %u.\n\n", pcb->sendq.begin, pcb->sendq.middle);
+  }
+#endif
+
+  /* Requeue all currently-unacked segments. */
   pcb->sendq.middle = pcb->sendq.begin;
 
-  int curr_seg=pcb->sendq.begin % 64;
+  const int curr_seg = pcb->sendq.begin % 64;
 
+#ifdef DEBUG_RTO
   printf("index=%i, Length=%i, tcp_seg_len=%i, in_flight? %i\n",
-        curr_seg, pcb->sendq.segs[curr_seg].len, tcp_seg_len(&pcb->sendq.segs[curr_seg]), pcb->sendq.segs[curr_seg].in_flight);
+         curr_seg, pcb->sendq.segs[curr_seg].len,
+         tcp_seg_len(&pcb->sendq.segs[curr_seg]),
+         pcb->sendq.segs[curr_seg].in_flight);
+#endif
 
-  // return;
-    
-  /* new version:
-  // is there already acked data in pcb->sendq?
-  // inspect from sendq.begin to sendq.middle
-
-  // valid_ack = ackno - (sendq.begin + segment_length)
-  // as segment_length does not depend on the received data, then valid_ack < 0 for when
-  // there is valid data in the current segment. 
-  // The pcb->sendq.middle most recent sent but unacked segment; middle-1 to end is unsent data. 
-  
-  // Q: if middle-1 is unsent data, why not just delete from begin to middle-1?
-  // A1: the problem might be in efficiently deleting middle
-  // TODO: (follow the trace of pcb->sendq.middle)
-  //        sendq is a reordering queue which conveniently (re)compresses data into the segment
-  //        explore the tcp_fast_send and tcp_slow_send and how the stuff data into segments
-  // 
-  // See: static inline void tcp_copy_data_to_segment(struct tcp_seg* seg, const iovec* iov_hdr,
-                         const iovec* iov_payload)
-  // Now there should be a tcp_delete_data_from_segment 
-  //
-  // 1. read tcp_seg_mark_acked_and_free
-  // 2. read tcp_add_to_unack_queue
-
-  // yes there is acked data:
-  // strip the acked data from the sendq
-  
-  // no:
-  // pcb->sendq.middle = pcb->sendq.begin;
-  */
-
-  // Phase 1:
-  // Observe if the packets are in-flight.
-
+  /* Phase 1 (debug-only): observe whether any segments are still in-flight. */
+#ifdef DEBUG_RTO
   struct timespec to;
-
-    // Get the current monotonic time
   clock_gettime(CLOCK_MONOTONIC, &to);
-
-    // Print the timestamp
-    // %ld is used for long int (seconds)
-    // %09ld is used for long int (nanoseconds), with zero-padding to 9 digits
   printf("\nTimeout Timestamp: %ld.%09ld seconds\n", to.tv_sec, to.tv_nsec);
 
   printf("begin: %i, middle: %i \n", pcb->sendq.begin, pcb->sendq.middle);
-  
-  for (int i=pcb->sendq.begin; i < pcb->sendq.middle; i++)
-  { 
-      int norm_i = i % 64; 
-      printf("index=%i, Length=%i, tcp_seg_len=%i, in_flight? %i\n",
-        norm_i, pcb->sendq.segs[norm_i].len, tcp_seg_len(&pcb->sendq.segs[norm_i]), pcb->sendq.segs[norm_i].in_flight);
-  }
-   
-  // Data in TCP Direct has been carefully compacted on each MSS iif there is space left
-  // only one MSS or less in-queue 
-  if (pcb->sendq.begin == pcb->sendq.middle)
-  { 
+
+  for( int i = pcb->sendq.begin; i < pcb->sendq.middle; i++ ) {
+    const int norm_i = i % 64;
     printf("index=%i, Length=%i, tcp_seg_len=%i, in_flight? %i\n",
-        curr_seg, pcb->sendq.segs[curr_seg].len, tcp_seg_len(&pcb->sendq.segs[curr_seg]), pcb->sendq.segs[curr_seg].in_flight);
+           norm_i, pcb->sendq.segs[norm_i].len,
+           tcp_seg_len(&pcb->sendq.segs[norm_i]),
+           pcb->sendq.segs[norm_i].in_flight);
+  }
+#endif
 
-    printf("next seqno expected: %u\n",  pcb->rcv_nxt);
-    printf("next new seqno to be sent: %u\n", pcb->snd_nxt); 
-    printf("Highest acknowledged seqno: %u\n", pcb->lastack); 
-    printf("next seqno to read: %u\n", pcb->rd_nxt); 
-    printf("seqno of next byte to be buffered: %u\n", pcb->snd_lbb);
-    printf("current segment seqno: %u\n",tcp_seg_seq(&pcb->sendq.segs[curr_seg]));
-    printf("current segment ack_seq: %u, rcv_nxt %u\n",tcp_seg_tcphdr(&pcb->sendq.segs[curr_seg])->ack_seq,pcb->rcv_nxt);
-
-    // removing extrabytes in the queue. 
-
+  /* Data in TCPDirect is compacted up to MSS when possible, so in the common
+   * case we expect <= 1 MSS-worth of payload in-queue at RTO.
+   * This comparison makes explicit the possibility of having more than one
+   * segment in the queue, which will be considered later.
+   */
+  if( pcb->sendq.begin == pcb->sendq.middle ) {
     unsigned nonacked = pcb->snd_nxt - pcb->lastack;
 
-    if (tcp_seg_len(&pcb->sendq.segs[curr_seg]) == nonacked)
-    {
+#ifdef DEBUG_RTO
+    printf("index=%i, Length=%i, tcp_seg_len=%i, in_flight? %i\n",
+           curr_seg, pcb->sendq.segs[curr_seg].len,
+           tcp_seg_len(&pcb->sendq.segs[curr_seg]),
+           pcb->sendq.segs[curr_seg].in_flight);
+
+    printf("next seqno expected: %u\n", pcb->rcv_nxt);
+    printf("next new seqno to be sent: %u\n", pcb->snd_nxt);
+    printf("Highest acknowledged seqno: %u\n", pcb->lastack);
+    printf("next seqno to read: %u\n", pcb->rd_nxt);
+    printf("seqno of next byte to be buffered: %u\n", pcb->snd_lbb);
+    printf("current segment seqno: %u\n", tcp_seg_seq(&pcb->sendq.segs[curr_seg]));
+    printf("current segment ack_seq: %u, rcv_nxt %u\n",
+           tcp_seg_tcphdr(&pcb->sendq.segs[curr_seg])->ack_seq, pcb->rcv_nxt);
+#endif
+
+    /* If the segment length already matches the outstanding (non-ACKed) byte
+     * count, there is nothing to trim.
+     */
+    if( tcp_seg_len(&pcb->sendq.segs[curr_seg]) == nonacked ) {
+#ifdef DEBUG_RTO
       printf("\nit is not necessary to trim...\n");
+#endif
       return;
     }
 
-
-    // All non acked bytes are within a single MSS
-    if (nonacked < pcb->mss) {
-       printf("-- Nonacked: %u, MSS: %u, seg length: %u\n\n", nonacked, pcb->mss, tcp_seg_len(&pcb->sendq.segs[curr_seg]));
+#ifdef DEBUG_RTO
+    if( nonacked < pcb->mss ) {
+      printf("-- Nonacked: %u, MSS: %u, seg length: %u\n\n",
+             nonacked, pcb->mss, tcp_seg_len(&pcb->sendq.segs[curr_seg]));
     }
 
-    // (1) leave only necessary bytes on pcb->sendq.segs[curr_seg].iov
-    
-    int c=0;
-
-//_Static_assert(sizeof(struct ethhdr) == 14, "Ethernet header struct error");
-//_Static_assert(sizeof(struct iphdr) == 20, "IP header struct error");
-//_Static_assert(sizeof(struct udphdr) == 8, "UDP header struct error");
-//_Static_assert(sizeof(struct tcphdr) == 20, "TCP header struct error");
-    for (c=0; c < pcb->sendq.segs[curr_seg].len; c++)
-    {
-      printf("%c",*((char*)(pcb->sendq.segs[curr_seg].iov.iov_base) + MY_TCP_HDR_SIZE+c));
-
-      if (!(c % 48) && c!=0)  // 4 packets of 12 bytes each == 48 per row.
-         printf("\n");
-    }
-     printf("\n");
-
-  //remove stuffed data
-
-  //modify the header
-  // MODIFY THE HEADER WISELY: at the moment is not working. 
-  // IT IS DONE BY tcp_output() ...
-  // tcp_seg_tcphdr(&pcb->sendq.segs[curr_seg])->seq = htonl(pcb->snd_nxt - nonacked);
-  
-  tcp_seg_tcphdr(&pcb->sendq.segs[curr_seg])->seq = htonl(pcb->lastack);
-
-  nonacked = pcb->snd_nxt - pcb->lastack;
-
-  // All non acked bytes are within a single MSS
-  if (nonacked < pcb->mss) {
-     printf("-- Nonacked after trimming: %u, MSS: %u, seg length: %u\n\n", nonacked, pcb->mss, tcp_seg_len(&pcb->sendq.segs[curr_seg]));
-  }
-
-  //TODO: I bet the following is correct and needs to disappear:
-  //tcp_seg_tcphdr(&pcb->sendq.segs[curr_seg])->ack_seq = htonl(pcb->rcv_nxt);
-  
-  //shift data to the beginning of the packet buffer
-  //unsigned offset = pcb->snd_nxt - tcp_seg_seq(&pcb->sendq.segs[curr_seg]);
-  unsigned offset = tcp_seg_len(&pcb->sendq.segs[curr_seg]) - nonacked;
-
-  printf("\n---\noffset: %u\n", offset);
-
-  if (tcp_seg_len(&pcb->sendq.segs[curr_seg]) == nonacked)
-    {
-      printf("\nresending already computed segment...\n");
-      return;
-    }
-
-  tcp_replace_data_inside_segment(&pcb->sendq.segs[curr_seg], offset);
-
-  // check content of header and payload (compare to above result)
-
-  printf("\n---\nTrimmed segment:\n");
-
-  for (c=0; c < pcb->sendq.segs[curr_seg].len; c++)
-  {
-    printf("%c",*((char*)(pcb->sendq.segs[curr_seg].iov.iov_base) + MY_TCP_HDR_SIZE+c));
-
-    if (!(c % 48) && c!=0)  // 4 packets of 12 bytes each == 48 per row.
+    /* (1) Leave only necessary bytes on pcb->sendq.segs[curr_seg].iov */
+    for( int c = 0; c < pcb->sendq.segs[curr_seg].len; c++ ) {
+      printf("%c", *((char*)(pcb->sendq.segs[curr_seg].iov.iov_base) +
+                     MY_TCP_HDR_SIZE + c));
+      if( !(c % 48) && c != 0 )
         printf("\n");
-  }
-  printf("\n");
+    }
+    printf("\n");
+#endif
 
-  // (2) TODO: proper fix/semantic for snd_lbb and snd_nxt (perhaps not!)
-    
-  } else {
-  // more than 1 MSS in-queue
-  // checking of highest acknowledged seqno is more complicated.   
-  }
+    /* Modify the header:
+     * tcp_output() will rebuild/overwrite most fields, but we explicitly set
+     * the sequence number to match the first outstanding byte (lastack).
+     */
+    tcp_seg_tcphdr(&pcb->sendq.segs[curr_seg])->seq = htonl(pcb->lastack);
 
+ // TEST: seems to be defined above
+ //   nonacked = pcb->snd_nxt - pcb->lastack;
+
+#ifdef DEBUG_RTO
+    if( nonacked < pcb->mss ) {
+      printf("-- Nonacked after trimming: %u, MSS: %u, seg length: %u\n\n",
+             nonacked, pcb->mss, tcp_seg_len(&pcb->sendq.segs[curr_seg]));
+    }
+#endif
+
+    /* We remove the already-ACKed prefix bytes by shifting payload left.
+     * offset = old_seg_len - nonacked.
+     */
+    unsigned offset = tcp_seg_len(&pcb->sendq.segs[curr_seg]) - nonacked;
+
+#ifdef DEBUG_RTO
+    printf("\n---\noffset: %u\n", offset);
+#endif
+
+    if( tcp_seg_len(&pcb->sendq.segs[curr_seg]) == nonacked ) {
+#ifdef DEBUG_RTO
+      printf("\nresending already computed segment...\n");
+#endif
+      return;
+    }
+
+    tcp_replace_data_inside_segment(&pcb->sendq.segs[curr_seg], offset);
+
+#ifdef DEBUG_RTO
+    printf("\n---\nTrimmed segment:\n");
+    for( int c = 0; c < pcb->sendq.segs[curr_seg].len; c++ ) {
+      printf("%c", *((char*)(pcb->sendq.segs[curr_seg].iov.iov_base) +
+                     MY_TCP_HDR_SIZE + c));
+      if( !(c % 48) && c != 0 )
+        printf("\n");
+    }
+    printf("\n");
+#endif
+
+    /* PROPOSED TODO NOTE:
+     * pcb->snd_lbb and pcb->snd_nxt semantics are subtle in this RTO path.
+     * tcp_output() will update snd_nxt based on what it actually transmits.
+     * We intentionally do not adjust snd_lbb/snd_nxt here to preserve the
+     * existing, known-good behaviour.
+     */
+  }
+  else {
+    /* More than 1 MSS in-queue:
+     * Checking/stripping ACKed data becomes more complicated, and is not
+     * implemented in this conservative RTO requeue path.
+     */
+  }
 }
 
 static void

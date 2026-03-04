@@ -85,10 +85,37 @@ static struct cfg cfg = {
 
 static struct zf_muxer_set* muxer;
 
-unsigned long max;
+
+#define NJUMPS 10
 unsigned long pointer = 0;
 unsigned long rnd_jump;
-unsigned n_jumps = 10;
+unsigned n_jumps = NJUMPS;
+
+unsigned sleep_at[NJUMPS];
+unsigned next_sleep = 0;
+
+
+static void build_sleep_points(unsigned total, unsigned n_jumps,
+                               unsigned* sleep_at /* n_jumps */)
+{
+  /* Split [0,total) into n_jumps buckets and pick 1 random point per bucket. */
+  for (unsigned j = 0; j < n_jumps; ++j) {
+    unsigned start = (unsigned)(((unsigned long long)j     * total) / n_jumps);
+    unsigned end   = (unsigned)(((unsigned long long)(j+1) * total) / n_jumps);
+    unsigned width = (end > start) ? (end - start) : 1;
+
+    /* random() is [0, 2^31-1] on glibc; no RAND_MAX needed. */
+    sleep_at[j] = start + (unsigned)(random() % width);
+  }
+
+  /* Ensure strictly increasing (avoid duplicates if buckets get small). */
+  for (unsigned j = 1; j < n_jumps; ++j)
+    if (sleep_at[j] <= sleep_at[j-1])
+      sleep_at[j] = sleep_at[j-1] + 1;
+
+  if (n_jumps && sleep_at[n_jumps-1] >= total)
+    sleep_at[n_jumps-1] = total - 1;
+}
 
 static void ping_pongs(struct zf_stack* stack, struct zft* zock)
 {
@@ -152,17 +179,14 @@ static void ping_pongs(struct zf_stack* stack, struct zft* zock)
       ZF_TEST(zft_send_single(zock, send_buf, cfg.size, 0) == cfg.size);
       --sends_left;
 
+      unsigned iter = (cfg.itercount - sends_left); /* 0..cfg.itercount-1 */
+
       if (!cfg.ping) {
-        if (max > 1 && rnd_jump == (max-sends_left) )
-           {
-            pointer += rnd_jump;
-            printf("Random jump: %lu\n", rnd_jump);
-            printf("Max: %lu\n", max);
-            max = (max - rnd_jump);
-            usleep(300000); // 300 ms to trigger RTO on the other side
-            printf("Pointer at: %lu\n", pointer);
-            rnd_jump = (random()*max)/(RAND_MAX*n_jumps);
-           }
+        if (next_sleep < n_jumps && iter == sleep_at[next_sleep]) {
+          usleep(300000);
+          ++next_sleep;
+          printf("Random jump: %u\n", iter);
+          }
         }
     }
     ZF_TEST(zft_zc_recv_done(zock, &msg.msg) == 1);
@@ -457,7 +481,6 @@ int main(int argc, char* argv[])
       break;
     case 'i':
       cfg.itercount = atoi(optarg);
-      max = cfg.itercount;
       break;
     case 'r':
       cfg.warmups = atoi(optarg);
@@ -502,8 +525,7 @@ int main(int argc, char* argv[])
 
 
   srandom(1234);
-  rnd_jump = (random()*max)/(RAND_MAX*n_jumps);
-
+  build_sleep_points(cfg.itercount, n_jumps, sleep_at);
 
   cfg.itercount += cfg.warmups;
   if( ! strcmp(argv[0], "ping") )
